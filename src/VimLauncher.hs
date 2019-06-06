@@ -187,6 +187,7 @@ class ToGrepQuery a where
 instance ToGrepQuery DefType where
   toGrepQuery identifier = let
     kwDecl kwName = "^\\s*" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
+    globalVar name = pure $ "^" ++ name ++ "\\s*::"
     in \case
       Class -> do
         guard $ isType identifier
@@ -203,13 +204,11 @@ instance ToGrepQuery DefType where
       Type -> do
         guard $ isType identifier
         pure $ kwDecl "type"
-      Variable scope -> case scope of
-        Global -> do
-          guard $ isVariable identifier
-          pure $ "^" ++ identifier ++ "\\s*::"
-        Local -> do
-          guard $ isVariable identifier
-          pure $ "^\\s\\+" ++ identifier ++ "\\s*::"
+      Variable scope -> do
+        guard $ isVariable identifier
+        case scope of
+          Global -> globalVar identifier
+          Local -> globalVar $ "\\s\\+" ++ identifier
 
 instance ToGrepQuery [DefType] where
   toGrepQuery identifier defs = let
@@ -254,14 +253,13 @@ openDef opts name defs = case toGrepQuery name defs of
         pure $ Just $ VimArgs $ [file] ++ gotoLine
 
 parseGrepFilePath :: String -> (FilePath, Int)
-parseGrepFilePath s = case span (/= ':') s of
-  (file, ':' : s') -> case span (/= ':') s' of
-    (lineNumber, ':' : _) -> (file, read lineNumber)
+parseGrepFilePath s = let
+  junk = ("", -1)
+  in case span (/= ':') s of
+    (file, ':' : s') -> case span (/= ':') s' of
+      (lineNumber, ':' : _) -> (file, read lineNumber)
+      _ -> junk
     _ -> junk
-  _ -> junk
-
-  where
-    junk = ("", -1)
 
 openExact :: String -> IO (Maybe VimArgs)
 openExact str = Dir.doesPathExist str >>= \case
@@ -269,15 +267,14 @@ openExact str = Dir.doesPathExist str >>= \case
   True -> pure $ Just $ VimArgs [str]
 
 openPartialPath :: [FilePath] -> String -> IO (Maybe VimArgs)
-openPartialPath files str = findFile files str >>= \case
-  Left _ -> pure Nothing
-  Right file -> pure $ Just $ VimArgs [file]
+openPartialPath files = pure . openPartialPath' files
 
-findFile :: [FilePath] -> String -> IO (Either String FilePath)
-findFile files s = let
-  files' = filter (s `List.isSuffixOf`) files
-  in pure $ case files' of
-    [file] -> Right file
-    [] -> Left "No such file"
-    _ -> Left "Too many files"
+openPartialPath' :: [FilePath] -> String -> Maybe VimArgs
+openPartialPath' files str = case findFiles files str of
+  [file] -> Just $ VimArgs [file]
+  [] -> Nothing
+  _ -> Nothing
+
+findFiles :: [FilePath] -> String -> [String]
+findFiles files s = filter (s `List.isSuffixOf`) files
 
