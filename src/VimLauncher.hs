@@ -31,17 +31,17 @@ main = getArgs >>= \(opts, args) -> do
   case args of
 
     [str] -> do
-      tryExit $ openExact str
+      _ <- tryExit $ openExactPath str
 
-      files <- ls
+      allFiles <- ls
 
-      tryExit $ openPartialPath files str
+      _ <- tryExit $ openPartialPath allFiles str
 
-      tryExit $ case fromHaskellPath str of
-        Nothing -> pure Nothing
-        Just str' -> openPartialPath files str'
+      _ <- tryExit $ case fromHaskellPath str of
+        Nothing -> pure $ Left []
+        Just str' -> openPartialPath allFiles str'
 
-      tryExit $ openDef opts str
+      _ <- tryExit $ openDef opts str
         [ Class
         , Constructor
         , Data
@@ -49,9 +49,11 @@ main = getArgs >>= \(opts, args) -> do
         , Type
         , Variable Global
         ]
+      pure ()
 
     (viewDef -> Just def) : [str] -> do
-      tryExit $ openDef opts str [def]
+      _ <- tryExit $ openDef opts str [def]
+      pure ()
 
     _ -> badArgsExit
 
@@ -105,10 +107,10 @@ isOption = \case
   '+' : _ -> True
   _ -> False
 
-tryExit :: IO (Maybe VimArgs) -> IO ()
+tryExit :: IO OpenResult -> IO [FilePath]
 tryExit action = action >>= \case
-  Nothing -> pure ()
-  Just args -> do
+  Left files -> pure files
+  Right args -> do
     print args
     Exit.exitSuccess
 
@@ -150,11 +152,6 @@ badArgsExit :: IO a
 badArgsExit = do
   putStrLn "Bad args"
   Exit.exitFailure
-
-fromSingle :: [a] -> Maybe a
-fromSingle = \case
-  [x] -> Just x
-  _ -> Nothing
 
 data Scope = Local | Global
 
@@ -234,23 +231,25 @@ isVariable = \case
     ]
   _ -> False
 
-openDef :: Options -> String -> [DefType] -> IO (Maybe VimArgs)
+type OpenResult = Either [FilePath] VimArgs
+
+openDef :: Options -> String -> [DefType] -> IO OpenResult
 openDef opts name defs = case toGrepQuery name defs of
-  Nothing -> pure Nothing
+  Nothing -> pure $ Left []
   Just query -> do
-    mResult <- fmap fromSingle $ do
+    files <- do
       let ic = case oIgnoreCase opts of
             True  -> ["-i"]
             False -> []
       grep $ ic ++ [query]
-    case mResult of
-      Nothing -> pure Nothing
-      Just result -> do
+    case files of
+      [result] -> do
         let (file, lineNumber) = parseGrepFilePath result
             gotoLine = case oGotoLine opts of
               True  -> ['+' : show lineNumber]
               False -> []
-        pure $ Just $ VimArgs $ [file] ++ gotoLine
+        pure $ Right $ VimArgs $ [file] ++ gotoLine
+      _ -> pure $ Left files
 
 parseGrepFilePath :: String -> (FilePath, Int)
 parseGrepFilePath s = let
@@ -261,19 +260,18 @@ parseGrepFilePath s = let
       _ -> junk
     _ -> junk
 
-openExact :: String -> IO (Maybe VimArgs)
-openExact str = Dir.doesPathExist str >>= \case
-  False -> pure Nothing
-  True -> pure $ Just $ VimArgs [str]
+openExactPath :: String -> IO OpenResult
+openExactPath str = Dir.doesPathExist str >>= \case
+  False -> pure $ Left []
+  True  -> pure $ Right $ VimArgs [str]
 
-openPartialPath :: [FilePath] -> String -> IO (Maybe VimArgs)
-openPartialPath files = pure . openPartialPath' files
+openPartialPath :: [FilePath] -> String -> IO OpenResult
+openPartialPath allFiles = pure . openPartialPath' allFiles
 
-openPartialPath' :: [FilePath] -> String -> Maybe VimArgs
-openPartialPath' files str = case findFiles files str of
-  [file] -> Just $ VimArgs [file]
-  [] -> Nothing
-  _ -> Nothing
+openPartialPath' :: [FilePath] -> String -> OpenResult
+openPartialPath' allFiles str = case findFiles allFiles str of
+  [file] -> Right $ VimArgs [file]
+  files -> Left files
 
 findFiles :: [FilePath] -> String -> [String]
 findFiles files s = filter (s `List.isSuffixOf`) files
