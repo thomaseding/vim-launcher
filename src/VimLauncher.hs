@@ -11,7 +11,6 @@ import           Prelude hiding (pred)
 import qualified System.Directory as Dir
 import qualified System.Environment as Env
 import qualified System.Exit as Exit
-import qualified System.FilePath as FP
 import qualified System.Process as Proc
 
 main :: IO ()
@@ -19,12 +18,17 @@ main = Env.getArgs >>= \case
 
   [str] -> do
     try $ openExact str
+
     files <- ls
+
     try $ openPartialPath files str
-    case fromHaskellPath str of
-      Nothing -> pure ()
-      Just str' -> try $ openPartialPath files str'
+
+    try $ case fromHaskellPath str of
+      Nothing -> pure Nothing
+      Just str' -> openPartialPath files str'
+
     try $ openDef str
+
     noVimArgs
 
   _ -> do
@@ -125,25 +129,4 @@ findFile files s = let
     [file] -> Right file
     [] -> Left "No such file"
     _ -> Left "Too many files"
-
-nonHiddenFiles :: IO [FilePath]
-nonHiddenFiles = recursiveListFiles (not . isHidden) "."
-
-recursiveListFiles :: (FilePath -> Bool) -> FilePath -> IO [FilePath]
-recursiveListFiles pred dir = do
-  kids <- let
-    f = filter pred . map (dir FP.</>)
-    in fmap f $ Dir.listDirectory dir
-
-  dirs <-  filterM Dir.doesDirectoryExist kids
-  files <- filterM Dir.doesFileExist      kids
-
-  filess <- mapM (recursiveListFiles pred) dirs
-  pure $ files ++ concat filess
-
-isHidden :: FilePath -> Bool
-isHidden p = case FP.takeFileName p of
-  "." -> False
-  '.' : _ -> True
-  _ -> False
 
