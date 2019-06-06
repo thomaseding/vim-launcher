@@ -1,4 +1,6 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module VimLauncher (
   main,
@@ -6,7 +8,9 @@ module VimLauncher (
 
 import qualified Control.Exception as Exn
 import           Control.Monad
+import qualified Data.Char as Char
 import qualified Data.List as List
+import qualified Data.Maybe as Maybe
 import           Prelude hiding (pred)
 import qualified System.Directory as Dir
 import qualified System.Environment as Env
@@ -28,7 +32,18 @@ main = Env.getArgs >>= \case
       Just str' -> openPartialPath files str'
 
     try $ openDef str
+      [ Class
+      , Constructor
+      , Data
+      , Newtype
+      , Type
+      , Variable
+      ]
 
+    noVimArgs
+
+  (viewDef -> Just def) : [str] -> do
+    try $ openDef str [def]
     noVimArgs
 
   _ -> do
@@ -77,30 +92,94 @@ noVimArgs = do
   putStrLn "Could not find a command."
   Exit.exitFailure
 
-getSuccess :: Monad m => [m (Maybe a)] -> m (Maybe a)
-getSuccess = \case
-  [] -> pure Nothing
-  m : ms -> m >>= \case
-    Nothing -> getSuccess ms
-    x @ Just {} -> pure x
-
 fromSingle :: [a] -> Maybe a
 fromSingle = \case
   [x] -> Just x
   _ -> Nothing
 
-openDef :: String -> IO (Maybe VimArgs)
-openDef name = do
-  let kwDecl kind = grep ["\\<" ++ kind ++ "\\s\\+" ++ name ++ "\\>"]
-      kinds = ["data", "type", "newtype", "class"]
-      funcDecl = grep ["^" ++ name ++ "\\s*::"]
-      greps = funcDecl : map kwDecl kinds
-  mResult <- getSuccess $ map (fmap fromSingle) greps
-  case mResult of
-    Nothing -> pure Nothing
-    Just result -> do
-      let (file, lineNumber) = parseGrepFilePath result
-      pure $ Just $ VimArgs [file, "+" ++ show lineNumber]
+data DefType
+  = Class
+  | Constructor
+  | Data
+  -- | Instance
+  | Newtype
+  | Type
+  | Variable
+
+viewDef :: String -> Maybe DefType
+viewDef = \case
+  "class" -> Just Class
+  "cons" -> Just Constructor
+  "constructor" -> Just Constructor
+  "data" -> Just Data
+  "new" -> Just Newtype
+  "newtype" -> Just Newtype
+  "type" -> Just Type
+  "var" -> Just Variable
+  "variable" -> Just Variable
+  _ -> Nothing
+
+class ToGrepQuery a where
+  toGrepQuery :: String -> a -> Maybe String
+
+instance ToGrepQuery DefType where
+  toGrepQuery identifier = let
+    kwDecl kwName = "\\<" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
+    in \case
+      Class -> do
+        guard $ isType identifier
+        pure $ kwDecl "class"
+      Constructor -> do
+        guard $ isType identifier
+        pure $ "[=|]\\s*" ++ identifier ++ "\\>"
+      Data -> do
+        guard $ isType identifier
+        pure $ kwDecl "data"
+      Newtype -> do
+        guard $ isType identifier
+        pure $ kwDecl "newtype"
+      Type -> do
+        guard $ isType identifier
+        pure $ kwDecl "type"
+      Variable -> do
+        guard $ isVariable identifier
+        pure $ "^\\s*" ++ identifier ++ "\\s*::"
+
+instance ToGrepQuery [DefType] where
+  toGrepQuery identifier defs = let
+    toQuery = toGrepQuery identifier
+    queries = Maybe.mapMaybe toQuery defs
+    in case queries of
+      [] -> Nothing
+      _ -> Just $ "\\(" ++ List.intercalate "\\)\\|\\(" queries ++ "\\)"
+
+isType :: String -> Bool
+isType = \case
+  c : _ -> List.all id
+    [ Char.isAlpha c
+    , Char.toUpper c == c
+    ]
+  _ -> False
+
+isVariable :: String -> Bool
+isVariable = \case
+  c : _ -> List.all id
+    [ Char.isAlpha c || c == '_'
+    , Char.toLower c == c
+    ]
+  _ -> False
+
+openDef :: String -> [DefType] -> IO (Maybe VimArgs)
+openDef name defs = case toGrepQuery name defs of
+  Nothing -> pure Nothing
+  Just query -> do
+    mResult <- fmap fromSingle $ do
+      grep [query]
+    case mResult of
+      Nothing -> pure Nothing
+      Just result -> do
+        let (file, lineNumber) = parseGrepFilePath result
+        pure $ Just $ VimArgs [file, "+" ++ show lineNumber]
 
 parseGrepFilePath :: String -> (FilePath, Int)
 parseGrepFilePath s = case span (/= ':') s of
