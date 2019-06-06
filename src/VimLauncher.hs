@@ -8,14 +8,33 @@ module VimLauncher (
 
 import qualified Control.Exception as Exn
 import           Control.Monad
+import           Control.Monad.IO.Class (liftIO)
+import           Control.Monad.State.Strict (StateT)
+import qualified Control.Monad.State.Strict as State
 import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified Data.Maybe as Maybe
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Prelude hiding (pred)
 import qualified System.Directory as Dir
 import qualified System.Environment as Env
 import qualified System.Exit as Exit
 import qualified System.Process as Proc
+
+data ProgState = ProgState
+  { stMatchingFiles :: Set FilePath
+  }
+
+type Prog = StateT ProgState IO
+
+runProg :: Prog () -> IO (Set FilePath)
+runProg action = do
+  let st = ProgState
+        { stMatchingFiles = mempty
+        }
+  st' <- State.execStateT action st
+  pure $ stMatchingFiles st'
 
 main :: IO ()
 main = getArgs >>= \(opts, args) -> do
@@ -28,20 +47,20 @@ main = getArgs >>= \(opts, args) -> do
     [] -> pure ()
     badOpts -> badOptionsExit badOpts
 
-  case args of
+  matchingFiles <- runProg $ case args of
 
     [str] -> do
-      _ <- tryExit $ openExactPath str
+      tryExit $ openExactPath str
 
-      allFiles <- ls
+      allFiles <- liftIO ls
 
-      _ <- tryExit $ openPartialPath allFiles str
+      tryExit $ openPartialPath allFiles str
 
-      _ <- tryExit $ case fromHaskellPath str of
+      tryExit $ case fromHaskellPath str of
         Nothing -> pure $ Left []
         Just str' -> openPartialPath allFiles str'
 
-      _ <- tryExit $ openDef opts str
+      tryExit $ openDef opts str
         [ Class
         , Constructor
         , Data
@@ -49,15 +68,13 @@ main = getArgs >>= \(opts, args) -> do
         , Type
         , Variable Global
         ]
-      pure ()
 
     (viewDef -> Just def) : [str] -> do
-      _ <- tryExit $ openDef opts str [def]
-      pure ()
+      tryExit $ openDef opts str [def]
 
-    _ -> badArgsExit
+    _ -> liftIO badArgsExit
 
-  putStrLn "Could not find a command."
+  mapM_ putStrLn matchingFiles
   Exit.exitFailure
 
 helpExit :: IO ()
@@ -107,10 +124,13 @@ isOption = \case
   '+' : _ -> True
   _ -> False
 
-tryExit :: IO OpenResult -> IO [FilePath]
-tryExit action = action >>= \case
-  Left files -> pure files
-  Right args -> do
+tryExit :: IO OpenResult -> Prog ()
+tryExit action = liftIO action >>= \case
+  Left files -> State.modify $ \st -> let
+    stFiles  = stMatchingFiles st
+    stFiles' = Set.union stFiles $ Set.fromList files
+    in st { stMatchingFiles = stFiles' }
+  Right args -> liftIO $ do
     print args
     Exit.exitSuccess
 
