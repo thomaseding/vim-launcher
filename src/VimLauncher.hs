@@ -19,7 +19,11 @@ main = Env.getArgs >>= \case
 
   [str] -> do
     try $ openExact str
-    try $ openPartialPath [id, fromHaskellPath] str
+    files <- ls
+    try $ openPartialPath files str
+    case fromHaskellPath str of
+      Nothing -> pure ()
+      Just str' -> try $ openPartialPath files str'
     try $ openDef str
     noVimArgs
 
@@ -33,13 +37,13 @@ try action = action >>= \case
     print args
     Exit.exitSuccess
 
-fromHaskellPath :: String -> String
-fromHaskellPath s = let
-  s' = flip map s $ \case
-    '.' -> '/'
-    c -> c
-  s'' = s' ++ ".hs"
-  in s''
+fromHaskellPath :: String -> Maybe String
+fromHaskellPath s = do
+  s' <- sequence $ flip map s $ \case
+    '/' -> Nothing
+    '.' -> Just '/'
+    c -> Just c
+  pure $ s' ++ ".hs"
 
 newtype VimArgs = VimArgs [String]
 
@@ -56,7 +60,7 @@ grep args = do
     _ = e :: Exn.SomeException
     in pure []
 
-ls :: IO [String]
+ls :: IO [FilePath]
 ls = gitProc "ls-files" ["--cached", "--others"]
 
 badArgs :: IO a
@@ -109,20 +113,21 @@ openExact str = Dir.doesPathExist str >>= \case
   False -> pure Nothing
   True -> pure $ Just $ VimArgs [str]
 
-openPartialPath :: [String -> String] -> String -> IO (Maybe VimArgs)
-openPartialPath fs str = findFile fs str >>= \case
+openPartialPath :: [FilePath] -> String -> IO (Maybe VimArgs)
+openPartialPath files str = findFile files str >>= \case
   Left _ -> pure Nothing
   Right file -> pure $ Just $ VimArgs [file]
 
-findFile :: [String -> String] -> String -> IO (Either String FilePath)
-findFile fs s = recursiveListFiles (not . isHidden) "." >>= \files -> let
-  files' = List.nub $ List.sort $ fs >>= \f -> let
-    s' = f s
-    in filter (s' `List.isSuffixOf`) files
+findFile :: [FilePath] -> String -> IO (Either String FilePath)
+findFile files s = let
+  files' = filter (s `List.isSuffixOf`) files
   in pure $ case files' of
     [file] -> Right file
     [] -> Left "No such file"
     _ -> Left "Too many files"
+
+nonHiddenFiles :: IO [FilePath]
+nonHiddenFiles = recursiveListFiles (not . isHidden) "."
 
 recursiveListFiles :: (FilePath -> Bool) -> FilePath -> IO [FilePath]
 recursiveListFiles pred dir = do
