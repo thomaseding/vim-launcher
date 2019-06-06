@@ -70,9 +70,23 @@ main = getArgs >>= \(opts, args) -> do
     (viewDef -> Just def) : [str] -> do
       tryExit $ openDef opts str [def]
 
-    ["module", str] -> do
+    (viewModule -> True) : [str] -> do
       allFiles <- liftIO ls
       tryExit $ openModule allFiles str
+
+    (viewTypes -> True) : [str] -> do
+      tryExit $ openDef opts str
+        [ Class
+        , Data
+        , Newtype
+        , Type
+        ]
+
+    (viewValues -> True) : [str] -> do
+      tryExit $ openDef opts str
+        [ Constructor
+        , Variable Global
+        ]
 
     _ -> liftIO badArgsExit
 
@@ -185,6 +199,22 @@ data DefType
   | Newtype
   | Type
   | Variable Scope
+
+viewValues :: String -> Bool
+viewValues = \case
+  "values" -> True
+  "vals" -> True
+  _ -> False
+
+viewTypes :: String -> Bool
+viewTypes = \case
+  "types" -> True
+  _ -> False
+
+viewModule :: String -> Bool
+viewModule = \case
+  "module" -> True
+  _ -> False
 
 viewDef :: String -> Maybe DefType
 viewDef = \case
