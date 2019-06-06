@@ -56,9 +56,7 @@ main = getArgs >>= \(opts, args) -> do
 
       tryExit $ openPartialPath allFiles str
 
-      tryExit $ case fromHaskellPath str of
-        Nothing -> pure $ Left []
-        Just str' -> openPartialPath allFiles str'
+      tryExit $ openModule allFiles str
 
       tryExit $ openDef opts str
         [ Class
@@ -71,6 +69,10 @@ main = getArgs >>= \(opts, args) -> do
 
     (viewDef -> Just def) : [str] -> do
       tryExit $ openDef opts str [def]
+
+    ["module", str] -> do
+      allFiles <- liftIO ls
+      tryExit $ openModule allFiles str
 
     _ -> liftIO badArgsExit
 
@@ -199,62 +201,62 @@ viewDef = \case
   _ -> Nothing
 
 class ToGrepQuery a where
-  toGrepQuery :: String -> a -> Maybe String
+  toGrepQuery :: Options -> String -> a -> Maybe String
 
 instance ToGrepQuery DefType where
-  toGrepQuery identifier = let
+  toGrepQuery opts identifier = let
     kwDecl kwName = "^\\s*" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
     globalVar name = pure $ "^" ++ name ++ "\\s*::"
     in \case
       Class -> do
-        guard $ isType identifier
+        guard $ isType opts identifier
         pure $ kwDecl "class"
       Constructor -> do
-        guard $ isType identifier
+        guard $ isType opts identifier
         pure $ "\\s[=|]\\s*" ++ identifier ++ "\\>"
       Data -> do
-        guard $ isType identifier
+        guard $ isType opts identifier
         pure $ kwDecl "data"
       Newtype -> do
-        guard $ isType identifier
+        guard $ isType opts identifier
         pure $ kwDecl "newtype"
       Type -> do
-        guard $ isType identifier
+        guard $ isType opts identifier
         pure $ kwDecl "type"
       Variable scope -> do
-        guard $ isVariable identifier
+        guard $ isVariable opts identifier
         case scope of
           Global -> globalVar identifier
           Local -> globalVar $ "\\s\\+" ++ identifier
 
 instance ToGrepQuery [DefType] where
-  toGrepQuery identifier defs = let
-    toQuery = toGrepQuery identifier
+  toGrepQuery opts identifier defs = let
+    toQuery = toGrepQuery opts identifier
     queries = Maybe.mapMaybe toQuery defs
     in case queries of
       [] -> Nothing
       _ -> Just $ "\\(" ++ List.intercalate "\\)\\|\\(" queries ++ "\\)"
 
-isType :: String -> Bool
-isType = \case
+isType :: Options -> String -> Bool
+isType opts = \case
   c : _ -> List.all id
     [ Char.isAlpha c
-    , Char.toUpper c == c
+    , Char.toUpper c == c || oIgnoreCase opts
     ]
   _ -> False
 
-isVariable :: String -> Bool
-isVariable = \case
+isVariable :: Options -> String -> Bool
+isVariable opts = \case
   c : _ -> List.all id
     [ Char.isAlpha c || c == '_'
-    , Char.toLower c == c
+    , Char.toLower c == c || oIgnoreCase opts
     ]
   _ -> False
 
 type OpenResult = Either [FilePath] VimArgs
 
 openDef :: Options -> String -> [DefType] -> IO OpenResult
-openDef opts name defs = case toGrepQuery name defs of
+openDef opts name defs = case toGrepQuery opts name defs of
   Nothing -> pure $ Left []
   Just query -> do
     files <- do
@@ -279,6 +281,11 @@ parseGrepFilePath s = let
       (lineNumber, ':' : _) -> (file, read lineNumber)
       _ -> junk
     _ -> junk
+
+openModule :: [FilePath] -> String -> IO OpenResult
+openModule allFiles str = case fromHaskellPath str of
+  Nothing -> pure $ Left []
+  Just str' -> openPartialPath allFiles str'
 
 openExactPath :: String -> IO OpenResult
 openExactPath str = Dir.doesPathExist str >>= \case
