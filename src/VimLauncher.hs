@@ -21,23 +21,27 @@ main :: IO ()
 main = getArgs >>= \(opts, args) -> do
 
   case oHelp opts of
-    True  -> doHelp
+    True  -> helpExit
     False -> pure ()
+
+  case oBadOptions opts of
+    [] -> pure ()
+    badOpts -> badOptionsExit badOpts
 
   case args of
 
     [str] -> do
-      try $ openExact str
+      tryExit $ openExact str
 
       files <- ls
 
-      try $ openPartialPath files str
+      tryExit $ openPartialPath files str
 
-      try $ case fromHaskellPath str of
+      tryExit $ case fromHaskellPath str of
         Nothing -> pure Nothing
         Just str' -> openPartialPath files str'
 
-      try $ openDef opts str
+      tryExit $ openDef opts str
         [ Class
         , Constructor
         , Data
@@ -46,43 +50,63 @@ main = getArgs >>= \(opts, args) -> do
         , Variable Global
         ]
 
-      noVimArgs
-
     (viewDef -> Just def) : [str] -> do
-      try $ openDef opts str [def]
-      noVimArgs
+      tryExit $ openDef opts str [def]
 
-    _ -> do
-      badArgs
+    _ -> badArgsExit
 
-doHelp :: IO ()
-doHelp = do
+  putStrLn "Could not find a command."
+  Exit.exitFailure
+
+helpExit :: IO ()
+helpExit = do
   putStrLn "Usage: TODO"
   Exit.exitFailure
 
 data Options = Options
-  { oHelp :: Bool
+  { oBadOptions :: [String]
+  , oHelp       :: Bool
   , oIgnoreCase :: Bool
+  , oGotoLine   :: Bool
   }
+
+newtype Keyword = Keyword { unKeyword :: [String] }
 
 getArgs :: IO (Options, [String])
 getArgs = do
   args <- Env.getArgs
   let (opts, args') = List.partition isOption args
-      exists = any (`elem` opts)
+      exists = any (`elem` opts) . unKeyword
+
+      help       = Keyword ["-h", "--help"]
+      ignoreCase = Keyword ["-i"]
+      gotoLine   = Keyword ["+"]
+
+      badOpts = let
+        kws = unKeyword =<<
+          [ help
+          , ignoreCase
+          , gotoLine
+          ]
+        in filter (`notElem` kws) opts
+
       opts' = Options
-        { oHelp       = exists ["-h", "--help"]
-        , oIgnoreCase = exists ["-i"]
+        { oBadOptions = badOpts
+        , oHelp       = exists help
+        , oIgnoreCase = exists ignoreCase
+        , oGotoLine   = exists gotoLine
         }
+
   pure (opts', args')
 
 isOption :: String -> Bool
 isOption = \case
   '-' : _ -> True
+  '+' : _ -> True
   _ -> False
 
-try :: IO (Maybe VimArgs) -> IO ()
-try action = action >>= \case
+tryExit :: IO (Maybe VimArgs) -> IO ()
+tryExit action = action >>= \case
   Nothing -> pure ()
   Just args -> do
     print args
@@ -117,14 +141,14 @@ grep args = gitProc "grep" $ "-n" : args
 ls :: IO [FilePath]
 ls = gitProc "ls-files" ["--cached", "--others"]
 
-badArgs :: IO a
-badArgs = do
-  putStrLn "Bad args"
+badOptionsExit :: [String] -> IO a
+badOptionsExit badOpts = do
+  putStrLn $ "Bad options: " ++ show badOpts
   Exit.exitFailure
 
-noVimArgs :: IO ()
-noVimArgs = do
-  putStrLn "Could not find a command."
+badArgsExit :: IO a
+badArgsExit = do
+  putStrLn "Bad args"
   Exit.exitFailure
 
 fromSingle :: [a] -> Maybe a
@@ -224,7 +248,10 @@ openDef opts name defs = case toGrepQuery name defs of
       Nothing -> pure Nothing
       Just result -> do
         let (file, lineNumber) = parseGrepFilePath result
-        pure $ Just $ VimArgs [file, "+" ++ show lineNumber]
+            gotoLine = case oGotoLine opts of
+              True  -> ['+' : show lineNumber]
+              False -> []
+        pure $ Just $ VimArgs $ [file] ++ gotoLine
 
 parseGrepFilePath :: String -> (FilePath, Int)
 parseGrepFilePath s = case span (/= ':') s of
