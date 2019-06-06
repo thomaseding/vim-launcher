@@ -18,36 +18,68 @@ import qualified System.Exit as Exit
 import qualified System.Process as Proc
 
 main :: IO ()
-main = Env.getArgs >>= \case
+main = getArgs >>= \(opts, args) -> do
 
-  [str] -> do
-    try $ openExact str
+  case oHelp opts of
+    True  -> doHelp
+    False -> pure ()
 
-    files <- ls
+  case args of
 
-    try $ openPartialPath files str
+    [str] -> do
+      try $ openExact str
 
-    try $ case fromHaskellPath str of
-      Nothing -> pure Nothing
-      Just str' -> openPartialPath files str'
+      files <- ls
 
-    try $ openDef str
-      [ Class
-      , Constructor
-      , Data
-      , Newtype
-      , Type
-      , Variable
-      ]
+      try $ openPartialPath files str
 
-    noVimArgs
+      try $ case fromHaskellPath str of
+        Nothing -> pure Nothing
+        Just str' -> openPartialPath files str'
 
-  (viewDef -> Just def) : [str] -> do
-    try $ openDef str [def]
-    noVimArgs
+      try $ openDef opts str
+        [ Class
+        , Constructor
+        , Data
+        , Newtype
+        , Type
+        , Variable Global
+        ]
 
-  _ -> do
-    badArgs
+      noVimArgs
+
+    (viewDef -> Just def) : [str] -> do
+      try $ openDef opts str [def]
+      noVimArgs
+
+    _ -> do
+      badArgs
+
+doHelp :: IO ()
+doHelp = do
+  putStrLn "Usage: TODO"
+  Exit.exitFailure
+
+data Options = Options
+  { oHelp :: Bool
+  , oIgnoreCase :: Bool
+  }
+
+getArgs :: IO (Options, [String])
+getArgs = do
+  args <- Env.getArgs
+  let (opts, args') = List.partition isOption args
+      exists = any (`elem` opts)
+      opts' = Options
+        { oHelp       = exists ["-h", "--help"]
+        , oIgnoreCase = exists ["-i"]
+        }
+  pure (opts', args')
+
+isOption :: String -> Bool
+isOption = \case
+  '-' : _ -> True
+  _ -> False
 
 try :: IO (Maybe VimArgs) -> IO ()
 try action = action >>= \case
@@ -69,15 +101,18 @@ newtype VimArgs = VimArgs [String]
 instance Show VimArgs where
   show (VimArgs strs) = unwords strs -- TODO: Escape string characters.
 
-gitProc :: String -> [String] -> IO [String]
-gitProc name args = fmap lines $ Proc.readProcess "git" (name : args) []
+rawGitProc :: String -> [String] -> IO String
+rawGitProc name args = Proc.readProcess "git" (name : args) []
 
-grep :: [String] -> IO [String]
-grep args = do
-  let action = gitProc "grep" $ "-n" : args
-  Exn.catch action $ \e -> let
+gitProc :: String -> [String] -> IO [String]
+gitProc name args = let
+  action = fmap lines $ rawGitProc name args
+  in Exn.catch action $ \e -> let
     _ = e :: Exn.SomeException
     in pure []
+
+grep :: [String] -> IO [String]
+grep args = gitProc "grep" $ "-n" : args
 
 ls :: IO [FilePath]
 ls = gitProc "ls-files" ["--cached", "--others"]
@@ -97,6 +132,8 @@ fromSingle = \case
   [x] -> Just x
   _ -> Nothing
 
+data Scope = Local | Global
+
 data DefType
   = Class
   | Constructor
@@ -104,7 +141,7 @@ data DefType
   -- | Instance
   | Newtype
   | Type
-  | Variable
+  | Variable Scope
 
 viewDef :: String -> Maybe DefType
 viewDef = \case
@@ -112,11 +149,12 @@ viewDef = \case
   "cons" -> Just Constructor
   "constructor" -> Just Constructor
   "data" -> Just Data
+  "local" -> Just $ Variable Local
   "new" -> Just Newtype
   "newtype" -> Just Newtype
   "type" -> Just Type
-  "var" -> Just Variable
-  "variable" -> Just Variable
+  "var" -> Just $ Variable Global
+  "variable" -> Just $ Variable Global
   _ -> Nothing
 
 class ToGrepQuery a where
@@ -124,14 +162,14 @@ class ToGrepQuery a where
 
 instance ToGrepQuery DefType where
   toGrepQuery identifier = let
-    kwDecl kwName = "\\<" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
+    kwDecl kwName = "^\\s*" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
     in \case
       Class -> do
         guard $ isType identifier
         pure $ kwDecl "class"
       Constructor -> do
         guard $ isType identifier
-        pure $ "[=|]\\s*" ++ identifier ++ "\\>"
+        pure $ "\\s[=|]\\s*" ++ identifier ++ "\\>"
       Data -> do
         guard $ isType identifier
         pure $ kwDecl "data"
@@ -141,9 +179,13 @@ instance ToGrepQuery DefType where
       Type -> do
         guard $ isType identifier
         pure $ kwDecl "type"
-      Variable -> do
-        guard $ isVariable identifier
-        pure $ "^\\s*" ++ identifier ++ "\\s*::"
+      Variable scope -> case scope of
+        Global -> do
+          guard $ isVariable identifier
+          pure $ "^" ++ identifier ++ "\\s*::"
+        Local -> do
+          guard $ isVariable identifier
+          pure $ "^\\s\\+" ++ identifier ++ "\\s*::"
 
 instance ToGrepQuery [DefType] where
   toGrepQuery identifier defs = let
@@ -169,12 +211,15 @@ isVariable = \case
     ]
   _ -> False
 
-openDef :: String -> [DefType] -> IO (Maybe VimArgs)
-openDef name defs = case toGrepQuery name defs of
+openDef :: Options -> String -> [DefType] -> IO (Maybe VimArgs)
+openDef opts name defs = case toGrepQuery name defs of
   Nothing -> pure Nothing
   Just query -> do
     mResult <- fmap fromSingle $ do
-      grep [query]
+      let ic = case oIgnoreCase opts of
+            True  -> ["-i"]
+            False -> []
+      grep $ ic ++ [query]
     case mResult of
       Nothing -> pure Nothing
       Just result -> do
