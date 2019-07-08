@@ -236,7 +236,7 @@ class ToGrepQuery a where
 instance ToGrepQuery DefType where
   toGrepQuery opts identifier = let
     kwDecl kwName = "^\\s*" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
-    globalVar name = pure $ "^" ++ name ++ "\\s*::"
+    globalVar name = pure $ "^" ++ name ++ "\\s*\\(::\\|$\\)"
     in \case
       Class -> do
         guard $ isType opts identifier
