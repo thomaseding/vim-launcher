@@ -235,15 +235,15 @@ class ToGrepQuery a where
 
 instance ToGrepQuery DefType where
   toGrepQuery opts identifier = let
-    kwDecl kwName = "^\\s*" ++ kwName ++ "\\s\\+" ++ identifier ++ "\\>"
-    globalVar name = pure $ "^" ++ name ++ "\\s*\\(::\\|$\\)"
+    kwDecl kwName = "^ *" ++ kwName ++ " \\+" ++ identifier ++ "\\>"
+    globalVar name = pure $ "^" ++ name ++ " *\\(::\\|$\\)"
     in \case
       Class -> do
         guard $ isType opts identifier
         pure $ kwDecl "class"
       Constructor -> do
         guard $ isType opts identifier
-        pure $ "\\s[=|]\\s*" ++ identifier ++ "\\>"
+        pure $ " [=|] *" ++ identifier ++ "\\>"
       Data -> do
         guard $ isType opts identifier
         pure $ kwDecl "data"
@@ -257,7 +257,7 @@ instance ToGrepQuery DefType where
         guard $ isVariable opts identifier
         case scope of
           Global -> globalVar identifier
-          Local -> globalVar $ "\\s\\+" ++ identifier
+          Local -> globalVar $ " \\+" ++ identifier
 
 instance ToGrepQuery [DefType] where
   toGrepQuery opts identifier defs = let
