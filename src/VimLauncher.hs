@@ -95,7 +95,46 @@ main = getArgs >>= \(opts, args) -> do
 
 helpExit :: IO ()
 helpExit = do
-  putStrLn "Usage: TODO"
+  mapM_ putStrLn
+    [ "Usage:"
+    , ""
+    , "vimlaucher -h"
+    , "vimlaucher --help"
+    , "  Prints this help message."
+    , ""
+    , "vimlaucher EXACT_PATH"
+    , "  Opens the file given by EXACT_PATH."
+    , ""
+    , "vimlaucher PARTIAL_PATH"
+    , "  Opens the file given by PARTIAL_PATH."
+    , ""
+    , "vimlaucher module MODULE"
+    , "vimlaucher MODULE"
+    , "  Opens the file containing the Haskell module named MODULE."
+    , ""
+    , "vimlaucher OPTS KIND IDENTIFIER"
+    , "vimlaucher OPTS IDENTIFIER"
+    , "  Opens the file containing the definition named IDENTIFIER given by KIND if provided."
+    , "  where"
+    , "    OPTS is any of:"
+    , "      -i : ignore case"
+    , "       + : open at the line of the definition"
+    , "    KIND is one of:"
+    , "      class"
+    , "      cons"
+    , "      constructor"
+    , "      data"
+    , "      local"
+    , "      new"
+    , "      newtype"
+    , "      type"
+    , "      var"
+    , "      variable"
+    , ""
+    , "If there are no candidate files, then this exits with exit code 1."
+    , "If there are multiple candidate files, then this exits with exit code 1 and prints the candidate files to stdout."
+    , "Otherwise this exits with exit code 0 and prints the arguments needed to open the file for vim's command line."
+    ]
   Exit.exitFailure
 
 data Options = Options
