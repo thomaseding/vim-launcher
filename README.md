@@ -2,7 +2,7 @@
 
 .bashrc
 ```
- () {
+v () {
   ARGS=$(vimlauncher "$@")
   if [ "$?" == '0' ]
   then
