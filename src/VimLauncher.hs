@@ -52,7 +52,7 @@ main = getArgs >>= \(opts, args) -> do
     [str] -> do
       tryExit $ openExactPath str
 
-      allFiles <- liftIO ls
+      allFiles <- liftIO lsHs
 
       tryExit $ openPartialPath allFiles str
 
@@ -71,7 +71,7 @@ main = getArgs >>= \(opts, args) -> do
       tryExit $ openDef opts str [def]
 
     (viewModule -> True) : [str] -> do
-      allFiles <- liftIO ls
+      allFiles <- liftIO lsHs
       tryExit $ openModule allFiles str
 
     (viewTypes -> True) : [str] -> do
@@ -216,7 +216,10 @@ grep :: [String] -> IO [String]
 grep args = gitProc "grep" $ "-n" : args
 
 ls :: IO [FilePath]
-ls = gitProc "ls-files" ["--cached", "--others"]
+ls = gitProc "ls-files" ["--cached", "--others", "--exclude-standard"]
+
+lsHs :: IO [FilePath]
+lsHs = filter (".hs" `List.isSuffixOf`) `fmap` ls
 
 badOptionsExit :: [String] -> IO a
 badOptionsExit badOpts = do
