@@ -195,7 +195,7 @@ fromHaskellPath s = do
     '/' -> Nothing
     '.' -> Just '/'
     c -> Just c
-  pure $ s' ++ ".hs"
+  pure $ "/" ++ s' ++ ".hs"
 
 newtype VimArgs = VimArgs [String]
 
